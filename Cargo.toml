@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/klip-core",
+  "crates/klip-cli",
+  "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2

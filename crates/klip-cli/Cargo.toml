@@ -1,0 +1,17 @@
+[package]
+name = "klip-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "klip"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+clipboard-rs = "0.3"
+klip-core = { path = "../klip-core" }
+rpassword = "7"
+serde_json = "1"
