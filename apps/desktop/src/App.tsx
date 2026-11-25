@@ -203,7 +203,11 @@ export function App() {
     const item = selectedItem();
     if (!item) return;
     setActionsOpen(false);
-    await invoke("copy_item", { id: item.id, pasteAfter });
+    try {
+      await invoke("copy_item", { id: item.id, pasteAfter });
+    } catch (e) {
+      flash(String(e));
+    }
   }
 
   async function handleTogglePin() {

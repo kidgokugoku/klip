@@ -13,7 +13,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 clipboard-rs = "0.3"
-enigo = "0.6"
 klip-core = { path = "../../../crates/klip-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,10 +21,13 @@ tauri-plugin-global-shortcut = "2"
 window-vibrancy = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.25"
 objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication", "NSWindow", "NSPanel", "NSResponder"] }
 tauri-nspanel = "2.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+enigo = "0.6"
 windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",

@@ -15,7 +15,16 @@ mod imp {
     use std::thread;
     use std::time::Duration;
 
-    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    use core_foundation::{
+        base::TCFType,
+        boolean::CFBoolean,
+        dictionary::{CFDictionary, CFDictionaryRef},
+        string::{CFString, CFStringRef},
+    };
+    use core_graphics::{
+        event::{CGEvent, CGEventFlags, CGEventTapLocation, KeyCode},
+        event_source::{CGEventSource, CGEventSourceStateID},
+    };
     use objc2_app_kit::{NSApplicationActivationOptions, NSWorkspace};
     use tauri::{AppHandle, Emitter, Manager, WebviewUrl};
     use tauri_nspanel::{
@@ -25,6 +34,25 @@ mod imp {
     use super::PreviousFocus;
 
     const SELF_BUNDLE_ID: &str = "xyz.444200.klip";
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+        static kAXTrustedCheckOptionPrompt: CFStringRef;
+    }
+
+    pub fn ensure_accessibility(prompt: bool) -> bool {
+        unsafe {
+            let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
+            let value = if prompt {
+                CFBoolean::true_value()
+            } else {
+                CFBoolean::false_value()
+            };
+            let options = CFDictionary::from_CFType_pairs(&[(key, value)]);
+            AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
+        }
+    }
 
     tauri_panel! {
         panel!(KlipPanel {
@@ -95,6 +123,7 @@ mod imp {
 
     pub fn hide_main_panel(app: &AppHandle) {
         if let Ok(panel) = app.get_webview_panel("main") {
+            panel.resign_key_window();
             panel.hide();
         }
     }
@@ -133,17 +162,23 @@ mod imp {
                     .bundleIdentifier()
                     .is_some_and(|id| id.to_string() == target_id)
                 {
-                    #[allow(deprecated)]
-                    let _ = app.activateWithOptions(NSApplicationActivationOptions::empty());
+                    let _ = app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
                     break;
                 }
             }
         }
-        thread::sleep(Duration::from_millis(60));
-        if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
-            let _ = enigo.key(Key::Meta, Direction::Press);
-            let _ = enigo.key(Key::Unicode('v'), Direction::Click);
-            let _ = enigo.key(Key::Meta, Direction::Release);
+        thread::sleep(Duration::from_millis(100));
+        if let Ok(source) = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+            && let (Ok(down), Ok(up)) = (
+                CGEvent::new_keyboard_event(source.clone(), KeyCode::ANSI_V, true),
+                CGEvent::new_keyboard_event(source, KeyCode::ANSI_V, false),
+            )
+        {
+            down.set_flags(CGEventFlags::CGEventFlagCommand);
+            up.set_flags(CGEventFlags::CGEventFlagCommand);
+            down.post(CGEventTapLocation::HID);
+            thread::sleep(Duration::from_millis(10));
+            up.post(CGEventTapLocation::HID);
         }
     }
 }
@@ -168,6 +203,10 @@ mod imp {
     };
 
     use super::PreviousFocus;
+
+    pub fn ensure_accessibility(_prompt: bool) -> bool {
+        true
+    }
 
     pub fn setup_main_window(app: &AppHandle) -> tauri::Result<()> {
         let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -270,10 +309,10 @@ mod imp {
                 let _ = SetForegroundWindow(HWND(hwnd as *mut core::ffi::c_void));
             }
         }
-        thread::sleep(Duration::from_millis(60));
+        thread::sleep(Duration::from_millis(80));
         if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
             let _ = enigo.key(Key::Control, Direction::Press);
-            let _ = enigo.key(Key::Unicode('v'), Direction::Click);
+            let _ = enigo.key(Key::Other(0x56), Direction::Click);
             let _ = enigo.key(Key::Control, Direction::Release);
         }
     }
@@ -284,6 +323,10 @@ mod imp {
     use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
     use super::PreviousFocus;
+
+    pub fn ensure_accessibility(_prompt: bool) -> bool {
+        true
+    }
 
     pub fn setup_main_window(app: &AppHandle) -> tauri::Result<()> {
         WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -362,6 +405,10 @@ pub fn hide_main_panel(app: &AppHandle) {
 
 pub fn active_app_name() -> Option<String> {
     imp::active_app_name()
+}
+
+pub fn ensure_accessibility(prompt: bool) -> bool {
+    imp::ensure_accessibility(prompt)
 }
 
 pub fn restore_focus_and_paste(prev: Option<PreviousFocus>) {

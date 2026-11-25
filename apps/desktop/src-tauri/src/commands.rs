@@ -217,6 +217,15 @@ pub fn copy_item(
         }
     }
 
+    if paste_after {
+        if !platform::ensure_accessibility(true) {
+            return Err(
+                "Grant Accessibility permission to Klip in System Settings → Privacy & Security → Accessibility"
+                    .into(),
+            );
+        }
+    }
+
     let prev = state
         .previous_focus
         .lock()

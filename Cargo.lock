@@ -2217,7 +2217,7 @@ dependencies = [
 
 [[package]]
 name = "klip-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2229,7 +2229,7 @@ dependencies = [
 
 [[package]]
 name = "klip-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2250,9 +2250,11 @@ dependencies = [
 
 [[package]]
 name = "klip-desktop"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clipboard-rs",
+ "core-foundation",
+ "core-graphics",
  "enigo",
  "klip-core",
  "objc2-app-kit",
