@@ -4,8 +4,7 @@ use std::sync::{Arc, Mutex};
 use clipboard_rs::{Clipboard, ClipboardContext, RustImageData, common::RustImage};
 use klip_core::config::{Config, RetentionMode, SyncConfig, save_config};
 use klip_core::crypto;
-use klip_core::maccy::import_from_maccy;
-use klip_core::model::{ClipDetail, ClipItem, ClipKind, ClipQuery, MaccyImportReport, SyncReport};
+use klip_core::model::{ClipDetail, ClipItem, ClipKind, ClipQuery, SyncReport};
 use klip_core::storage::ClipStore;
 use klip_core::sync::S3SyncClient;
 use serde::{Deserialize, Serialize};
@@ -31,8 +30,11 @@ pub struct SyncStatusInfo {
     pub enabled: bool,
     pub bucket: Option<String>,
     pub endpoint: Option<String>,
+    pub region: Option<String>,
     pub prefix: Option<String>,
     pub access_key_id: Option<String>,
+    pub has_secret_access_key: bool,
+    pub has_passphrase: bool,
     pub auto_sync_secs: u64,
     pub push_latest_to_clipboard: bool,
     pub total_items: usize,
@@ -260,21 +262,6 @@ pub fn clear_unpinned(state: State<'_, Arc<AppState>>) -> Result<usize, String> 
 }
 
 #[tauri::command]
-pub fn import_maccy(state: State<'_, Arc<AppState>>) -> Result<MaccyImportReport, String> {
-    let cfg = state.config.lock().map_err(|e| e.to_string())?.clone();
-    let mut store = state.store.lock().map_err(|e| e.to_string())?;
-    import_from_maccy(
-        &mut store,
-        None,
-        &cfg.device_id,
-        &cfg.device_name,
-        cfg.sync.is_some(),
-        cfg.max_image_bytes,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn get_sync_status(state: State<'_, Arc<AppState>>) -> Result<SyncStatusInfo, String> {
     let cfg = state.config.lock().map_err(|e| e.to_string())?.clone();
     let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -294,8 +281,17 @@ pub fn get_sync_status(state: State<'_, Arc<AppState>>) -> Result<SyncStatusInfo
         enabled: cfg.sync.is_some(),
         bucket: cfg.sync.as_ref().map(|s| s.bucket.clone()),
         endpoint: cfg.sync.as_ref().map(|s| s.endpoint.clone()),
+        region: cfg.sync.as_ref().map(|s| s.region.clone()),
         prefix: cfg.sync.as_ref().map(|s| s.prefix.clone()),
         access_key_id: cfg.sync.as_ref().map(|s| s.access_key_id.clone()),
+        has_secret_access_key: cfg
+            .sync
+            .as_ref()
+            .is_some_and(|s| !s.secret_access_key.is_empty()),
+        has_passphrase: cfg
+            .sync
+            .as_ref()
+            .is_some_and(|s| s.derived_key_b64.as_ref().is_some_and(|k| !k.is_empty())),
         auto_sync_secs: cfg.sync.as_ref().map(|s| s.auto_sync_secs).unwrap_or(30),
         push_latest_to_clipboard: cfg
             .sync
@@ -317,28 +313,63 @@ pub fn setup_sync(
     state: State<'_, Arc<AppState>>,
     req: SetupSyncRequest,
 ) -> Result<SyncReport, String> {
-    let salt = crypto::deterministic_vault_salt(&format!("{}/{}", req.bucket, req.prefix));
-    let derived = crypto::derive_key(&req.passphrase, &salt).map_err(|e| e.to_string())?;
+    let (existing_sync, device_id) = {
+        let cfg = state.config.lock().map_err(|e| e.to_string())?;
+        (cfg.sync.clone(), cfg.device_id.clone())
+    };
+
+    let bucket = req.bucket.trim().to_string();
+    let prefix = req.prefix.trim().to_string();
+
+    let secret_access_key = {
+        let raw = req.secret_access_key.trim();
+        if raw.is_empty() {
+            existing_sync
+                .as_ref()
+                .map(|s| s.secret_access_key.clone())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "Secret Access Key is required".to_string())?
+        } else {
+            raw.to_string()
+        }
+    };
+
+    let (salt_b64, derived_key_b64) = if req.passphrase.is_empty() {
+        let existing = existing_sync
+            .as_ref()
+            .ok_or_else(|| "E2EE Passphrase is required".to_string())?;
+        if existing.bucket != bucket || existing.prefix != prefix {
+            return Err("Passphrase is required when changing bucket or prefix".into());
+        }
+        let derived = existing
+            .derived_key_b64
+            .clone()
+            .filter(|k| !k.is_empty())
+            .ok_or_else(|| "E2EE Passphrase is required".to_string())?;
+        (existing.salt_b64.clone(), Some(derived))
+    } else {
+        let salt = crypto::deterministic_vault_salt(&format!("{bucket}/{prefix}"));
+        let derived = crypto::derive_key(&req.passphrase, &salt).map_err(|e| e.to_string())?;
+        (
+            crypto::encode_bytes(&salt),
+            Some(crypto::encode_bytes(&derived)),
+        )
+    };
+
     let sync_cfg = SyncConfig {
         endpoint: req.endpoint.trim().to_string(),
-        bucket: req.bucket.trim().to_string(),
+        bucket,
         region: req.region.trim().to_string(),
-        prefix: req.prefix.trim().to_string(),
+        prefix,
         access_key_id: req.access_key_id.trim().to_string(),
-        secret_access_key: req.secret_access_key.trim().to_string(),
-        salt_b64: crypto::encode_bytes(&salt),
-        derived_key_b64: Some(crypto::encode_bytes(&derived)),
+        secret_access_key,
+        salt_b64,
+        derived_key_b64,
         auto_sync_secs: req.auto_sync_secs.max(5),
         push_latest_to_clipboard: req.push_latest_to_clipboard,
     };
 
     let client = S3SyncClient::from_config(&sync_cfg, None).map_err(|e| e.to_string())?;
-    let device_id = state
-        .config
-        .lock()
-        .map_err(|e| e.to_string())?
-        .device_id
-        .clone();
 
     let report = {
         let mut store = state.store.lock().map_err(|e| e.to_string())?;

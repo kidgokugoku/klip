@@ -255,7 +255,6 @@ pub fn run() {
             commands::toggle_pin,
             commands::delete_item,
             commands::clear_unpinned,
-            commands::import_maccy,
             commands::get_sync_status,
             commands::setup_sync,
             commands::sync_now,

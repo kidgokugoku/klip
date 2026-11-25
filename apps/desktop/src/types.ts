@@ -34,8 +34,11 @@ export interface SyncStatusInfo {
   enabled: boolean;
   bucket?: string | null;
   endpoint?: string | null;
+  region?: string | null;
   prefix?: string | null;
   accessKeyId?: string | null;
+  hasSecretAccessKey: boolean;
+  hasPassphrase: boolean;
   autoSyncSecs: number;
   pushLatestToClipboard: boolean;
   totalItems: number;
@@ -53,13 +56,6 @@ export interface SyncReport {
   appliedItems: number;
   latestRemoteHash?: string | null;
   syncedAt: number;
-}
-
-export interface MaccyImportReport {
-  imported: number;
-  skippedDuplicates: number;
-  skippedEmptyOrUnsupported: number;
-  dbPath: string;
 }
 
 export type RetentionMode = "count" | "days" | "both" | "unlimited";

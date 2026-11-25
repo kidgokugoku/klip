@@ -22,7 +22,6 @@ import type {
   ClipItem,
   ClipKind,
   FilterValue,
-  MaccyImportReport,
   RetentionMode,
   SyncReport,
   SyncStatusInfo,
@@ -30,11 +29,14 @@ import type {
 
 const isMac = navigator.platform.toLowerCase().includes("mac");
 const MOD_KEY = isMac ? "⌘" : "Ctrl";
+const PAGE_SIZE = 200;
 
 export function App() {
   const [search, setSearch] = createSignal("");
   const [filter, setFilter] = createSignal<FilterValue>("all");
   const [items, setItems] = createSignal<ClipItem[]>([]);
+  const [hasMore, setHasMore] = createSignal(false);
+  const [loadingMore, setLoadingMore] = createSignal(false);
   const [selectedIdx, setSelectedIdx] = createSignal(0);
   const [detail, setDetail] = createSignal<ClipDetail | null>(null);
   const [isComposing, setIsComposing] = createSignal(false);
@@ -89,24 +91,56 @@ export function App() {
     void refreshSyncStatus();
   }
 
-  async function refreshItems(keepSelection = false) {
+  function currentQueryParams(offset: number, limit: number) {
     const f = filter();
     const kind: ClipKind | null =
       f === "all" || f === "pinned" ? null : (f as ClipKind);
+    return {
+      search: search().trim() || null,
+      kind,
+      pinnedOnly: f === "pinned",
+      limit,
+      offset,
+    };
+  }
+
+  async function refreshItems(keepSelection = false) {
+    const loadedCount = keepSelection
+      ? Math.max(PAGE_SIZE, items().length)
+      : PAGE_SIZE;
     const list = await invoke<ClipItem[]>("query_items", {
-      query: {
-        search: search().trim() || null,
-        kind,
-        pinnedOnly: f === "pinned",
-        limit: 150,
-        offset: 0,
-      },
+      query: currentQueryParams(0, loadedCount),
     });
     setItems(list);
+    setHasMore(list.length >= loadedCount);
     if (!keepSelection) {
       setSelectedIdx(0);
     } else if (selectedIdx() >= list.length) {
       setSelectedIdx(Math.max(0, list.length - 1));
+    }
+  }
+
+  async function loadMore() {
+    if (!hasMore() || loadingMore()) return;
+    setLoadingMore(true);
+    try {
+      const offset = items().length;
+      const next = await invoke<ClipItem[]>("query_items", {
+        query: currentQueryParams(offset, PAGE_SIZE),
+      });
+      if (next.length > 0) {
+        setItems((prev) => [...prev, ...next]);
+      }
+      setHasMore(next.length >= PAGE_SIZE);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  function handleListScroll(e: Event) {
+    const el = e.currentTarget as HTMLDivElement;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
+      void loadMore();
     }
   }
 
@@ -127,6 +161,7 @@ export function App() {
     setSyncStatus(info);
     if (info.endpoint) setEndpoint(info.endpoint);
     if (info.bucket) setBucket(info.bucket);
+    if (info.region) setRegion(info.region);
     if (info.prefix) setPrefix(info.prefix);
     if (info.accessKeyId) setAccessKeyId(info.accessKeyId);
     setAutoSyncSecs(info.autoSyncSecs);
@@ -159,6 +194,9 @@ export function App() {
     const idx = selectedIdx();
     const el = rowRefs[idx];
     el?.scrollIntoView({ block: "nearest" });
+    if (hasMore() && idx >= items().length - 15) {
+      void loadMore();
+    }
   });
 
   async function handlePaste(pasteAfter: boolean) {
@@ -182,28 +220,15 @@ export function App() {
     setActionsOpen(false);
     await invoke("delete_item", { id: item.id });
     await refreshItems(true);
+    await refreshSyncStatus();
   }
 
   async function handleClearUnpinned() {
     setActionsOpen(false);
     const removed = await invoke<number>("clear_unpinned");
     await refreshItems(false);
+    await refreshSyncStatus();
     flash(`Cleared ${removed} items`);
-  }
-
-  async function handleImportMaccy() {
-    setActionsOpen(false);
-    setBusy(true);
-    try {
-      const rep = await invoke<MaccyImportReport>("import_maccy");
-      await refreshItems(false);
-      await refreshSyncStatus();
-      flash(`Imported ${rep.imported} from Maccy (${rep.skippedDuplicates} dup)`);
-    } catch (e) {
-      flash(String(e));
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function handleSyncNow() {
@@ -401,6 +426,17 @@ export function App() {
     () => retentionMode() === "days" || retentionMode() === "both",
   );
 
+  const footerCountLabel = createMemo(() => {
+    const total = syncStatus()?.totalItems ?? items().length;
+    const isFiltered = search().trim().length > 0 || filter() !== "all";
+    if (!isFiltered) {
+      return `${total} items`;
+    }
+    return hasMore()
+      ? `${items().length}+ matches (${total} total)`
+      : `${items().length} matches (${total} total)`;
+  });
+
   return (
     <div class="shell">
       <div class="header">
@@ -442,7 +478,7 @@ export function App() {
       </div>
 
       <div class="main">
-        <div class="list-pane">
+        <div class="list-pane" onScroll={handleListScroll}>
           <Show
             when={items().length > 0}
             fallback={<div class="empty">No clipboard items</div>}
@@ -584,7 +620,7 @@ export function App() {
 
       <div class="footer">
         <div class="footer-left">
-          <span>{statusFlash() ?? `${items().length} items`}</span>
+          <span>{statusFlash() ?? footerCountLabel()}</span>
         </div>
         <div class="footer-actions">
           <button
@@ -658,15 +694,6 @@ export function App() {
               <span>Settings...</span>
               <kbd>{MOD_KEY},</kbd>
             </button>
-            <Show when={isMac}>
-              <button
-                class="menu-item"
-                type="button"
-                onClick={() => void handleImportMaccy()}
-              >
-                <span>Import Maccy History</span>
-              </button>
-            </Show>
             <div class="menu-sep" />
             <button
               class="menu-item danger"
@@ -799,16 +826,7 @@ export function App() {
                 </div>
 
                 <div class="modal-footer">
-                  <Show when={isMac} fallback={<span />}>
-                    <button
-                      class="btn"
-                      type="button"
-                      onClick={() => void handleImportMaccy()}
-                      disabled={busy()}
-                    >
-                      Import Maccy
-                    </button>
-                  </Show>
+                  <span />
                   <div style={{ display: "flex", gap: "8px" }}>
                     <button
                       class="btn"
@@ -885,21 +903,41 @@ export function App() {
                   />
                 </div>
                 <div class="field">
-                  <label>Secret Access Key</label>
+                  <label>
+                    <span>Secret Access Key</span>
+                    <Show when={syncStatus()?.hasSecretAccessKey}>
+                      <span class="saved-badge">Saved</span>
+                    </Show>
+                  </label>
                   <input
                     type="password"
+                    placeholder={
+                      syncStatus()?.hasSecretAccessKey
+                        ? "Saved — enter new value to overwrite"
+                        : "Enter R2 Secret Access Key"
+                    }
                     value={secretAccessKey()}
                     onInput={(e) => setSecretAccessKey(e.currentTarget.value)}
-                    required
+                    required={!syncStatus()?.hasSecretAccessKey}
                   />
                 </div>
                 <div class="field">
-                  <label>E2EE Passphrase</label>
+                  <label>
+                    <span>E2EE Passphrase</span>
+                    <Show when={syncStatus()?.hasPassphrase}>
+                      <span class="saved-badge">Saved</span>
+                    </Show>
+                  </label>
                   <input
                     type="password"
+                    placeholder={
+                      syncStatus()?.hasPassphrase
+                        ? "Saved — enter new passphrase to overwrite"
+                        : "Enter E2EE Passphrase"
+                    }
                     value={passphrase()}
                     onInput={(e) => setPassphrase(e.currentTarget.value)}
-                    required
+                    required={!syncStatus()?.hasPassphrase}
                   />
                 </div>
                 <label class="check-row">

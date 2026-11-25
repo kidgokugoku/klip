@@ -476,6 +476,18 @@ kbd {
 .field label {
   font-size: 11px;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.saved-badge {
+  font-size: 10px;
+  color: var(--green);
+  background: rgba(61, 220, 132, 0.12);
+  border: 1px solid rgba(61, 220, 132, 0.25);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
 .field input,
