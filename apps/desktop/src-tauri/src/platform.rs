@@ -214,6 +214,10 @@ mod imp {
             .inner_size(780.0, 500.0)
             .decorations(false)
             .transparent(true)
+            // 无边框窗口仍带着 DWM 的阴影边框，透明窗口下会露成一圈白；关掉它
+            .shadow(false)
+            // 无边框窗口在 Windows 上仍会用窗口背景刷出一圈白边，铺成透明才和圆角面板贴合
+            .background_color(tauri::window::Color(0, 0, 0, 0))
             .visible(false)
             .resizable(false)
             .skip_taskbar(true)
